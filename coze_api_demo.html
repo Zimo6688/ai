@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coze工作流调用示例</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/themes/prism.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/components/prism-json.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        textarea {
+            width: 100%;
+            height: 120px;
+            padding: 12px;
+            margin: 15px 0;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            resize: vertical;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        #response {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            min-height: 100px;
+            line-height: 1.6;
+            font-family: Menlo, Consolas, monospace;
+            overflow-x: auto;
+        }
+        #response pre {
+            margin: 0;
+            padding: 0;
+            background: none;
+            border: none;
+        }
+        #log {
+            margin-top: 20px;
+            padding: 15px;
+            background: #2b2b2b;
+            color: #e6e6e6;
+            border-radius: 6px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Coze工作流调用演示</h2>
+        <textarea id="input" placeholder="请输入要处理的文本内容...">男孩的名字，感觉有力量</textarea>
+        <button onclick="handleSubmit()">执行工作流</button>
+        <h3>响应结果：</h3>
+        <div id="response"></div>
+        <h3>调用日志：</h3>
+        <div id="log"></div>
+    </div>
+
+    
+    <script>
+        const logDiv = document.getElementById('log');
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#ff6b6b' : 
+                         type === 'success' ? '#69db7c' : 
+                         type === 'warning' ? '#ffd43b' : '#e6e6e6';
+            logDiv.innerHTML += `<div style="color: ${color}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        
+        async function handleSubmit() {
+            const input = document.getElementById('input').value;
+            const responseDiv = document.getElementById('response');
+            responseDiv.innerHTML = '⏳ 请求处理中...';
+            log('🚀 开始发起API请求...');
+
+            try {
+                log('📝 创建API客户端实例...');
+                const apiUrl = 'https://api.coze.cn/v1/workflow/run';
+                const workflowId = '7477799711915786266';
+                
+                log('🔄 发送原生fetch请求...');
+                const response = await fetch(`${apiUrl}?workflow_id=${workflowId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer pat_y5hTFoF2sSjchghZAGm86Tx4Jq85FGQNmiVxDoLMQQrfO9BT6jG00wukFGpaavmx',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        parameters: {
+                            input: input
+                        }
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP错误! 状态码: ${response.status}`);
+                }
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let result = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value);
+                    result += chunk;
+                    log(`📦 接收数据块: ${chunk}`, 'success');
+                    // 格式化响应结果
+// 添加Prism.js代码高亮库
+const highlightJSON = (jsonStr) => {
+    try {
+        const parsed = JSON.parse(jsonStr);
+        const formatted = JSON.stringify(parsed, null, 2)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        return Prism.highlight(formatted, Prism.languages.json, 'json');
+    } catch (e) {
+        return jsonStr.replace(/\\(.)/g, (_, char) => {
+            if (char === 'n') return '<br>'; 
+            if (char === 't') return '&nbsp;&nbsp;&nbsp;&nbsp;';
+            return char;
+        });
+    }
+};
+
+// 动态解析嵌套JSON
+const parseNestedJSON = (str) => {
+    try {
+        let data = JSON.parse(str);
+        // 处理嵌套的data字段
+        if (data.data && typeof data.data === 'string') {
+            data.data = JSON.parse(data.data);
+        }
+        // 提取最终output内容
+        const output = data?.data?.output || data.output;
+        // 处理转义字符和格式
+        return output 
+            ? output
+                .replace(/\\"/g, '"')
+                .replace(/\\n/g,'\n')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            : data;
+    } catch (e) {
+        // 使用正则表达式提取关键信息
+        const matches = str.matchAll(/(\d+\.\s*[^:]+):\s*([^\n]+)/g);
+        return Array.from(matches).map(([_, name, desc]) => ({ name, desc }));
+    }
+};
+
+// 更新显示逻辑
+const processed = parseNestedJSON(result);
+const displayContent = `<pre style="white-space: pre-wrap; line-height: 1.6;">${typeof processed === 'object' ? JSON.stringify(processed, null, 2) : processed}</pre>`;
+responseDiv.innerHTML = displayContent;
+                }
+                log('🎉 请求完成！', 'success');
+
+            } catch (error) {
+                log(`❌ API调用失败: ${error.message}`, 'error');
+                console.error('API调用失败:', error);
+                responseDiv.innerHTML = `❌ 错误：${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
