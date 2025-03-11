@@ -262,7 +262,7 @@
         </div>
         <div class="books-grid">
             <div v-for="book in books" :key="book.id" class="book-card">
-                <img :src="book.cover" :alt="book.name">
+                <img :src="book.cover" :alt="book.name" @click="showImagePreview(book.cover)" style="cursor: pointer;">
                 <div class="book-title">{{ book.name }}</div>
                 <div class="book-title" style="font-style: italic; margin-bottom: 10px;">{{ book.en_name || '无' }}</div>
                 <div class="book-info">
@@ -301,13 +301,53 @@
             </div>
         </div>
     </el-dialog>
+    <el-dialog
+        v-model="showImageDialog"
+        :title="''"
+        :modal-class="'image-preview-modal'"
+        class="image-preview-dialog"
+        :close-on-click-modal="true"
+        :show-close="true"
+        width="90%"
+    >
+        <img :src="previewImage" style="max-width: 100%; max-height: 70vh; object-fit: contain;" />
+    </el-dialog>
     </div>
+    <style>
+    .image-preview-dialog .el-dialog {
+        background: #000;
+        border-radius: 8px;
+        overflow: hidden;
+        height: 75vh;
+    }
+    .image-preview-dialog .el-dialog__header {
+        
+        margin: 0;
+        padding: 12px;
+    }
+    .image-preview-dialog .el-dialog__body {
+        height: calc(75vh - 40px);  /* 调整为header实际高度 */
+        padding: 0;
+        margin: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: #000;
+    }
+    .image-preview-dialog .el-dialog__body img {
+        max-width: 95%;
+        max-height: calc(75vh - 40px);  /* 与容器高度保持一致 */
+        object-fit: contain;
+    }
+    </style>
     <script>
         const { createApp } = Vue;
         const app = createApp({
             data() {
                 return {
                     showLogDialog: false,
+                    showImageDialog: false,
+                    previewImage: '',
                     filterForm: {
                         series: null,
                         grade: null,
@@ -365,4 +405,106 @@
                         }
                     }
                 },
-                scroll
+                scrollToTop() {
+                    window.scrollTo({
+                        top: 0,
+                        behavior: 'smooth'
+                    });
+                },
+                handleSearch() {
+                    this.currentPage = 1;
+                    this.hasMore = true;
+                    this.fetchBooks();
+                },
+                log(message, type = 'info') {
+                    const timestamp = new Date().toLocaleTimeString();
+                    this.logs.unshift({
+                        message,
+                        type,
+                        timestamp
+                    });
+                    // 保持日志条目不超过50条
+                    if(this.logs.length > 50) this.logs.pop();
+                },
+                async fetchOptions() {
+                    try {
+                        const response = await fetch('https://api.bubble.shenmo-ai.net/books-options');
+                        const data = await response.json();
+                        // 移除每个分类的第一个选项（全部xxx）
+                        this.seriesOptions = data.data.series.slice(1);
+                        this.gradeOptions = data.data.grade.slice(1);
+                        this.levelOptions = data.data.level.slice(1);
+                        this.themeOptions = data.data.theme.slice(1);
+                    } catch (error) {
+                        console.error('获取筛选选项失败:', error);
+                        this.log(`❌ 获取选项失败: ${error.message}`, 'error');
+                    }
+                },
+                async fetchBooks(isLoadMore = false) {
+                    this.loading = true;
+                    try {
+                        // 收集所有选中的tid值
+                        const selectedTids = Object.values(this.filterForm)
+                            .filter(val => val !== null && val !== undefined)
+                            .join(',');
+                        
+                        const queryParams = `page=${this.currentPage}&size=${this.pageSize}${selectedTids ? `&tids=${selectedTids}` : ''}`;
+                        const fullUrl = `https://api.bubble.shenmo-ai.net/books?${queryParams}`;
+                        this.log(`🌐 请求URL: ${fullUrl}`, 'info');
+                        
+                        const response = await fetch(fullUrl);
+                        const data = await response.json();
+                        
+                        // 更新总数和分页信息
+                        this.totalBooks = data.total_count || 0;
+                        
+                        if (!data.data || data.data.length === 0) {
+                            if (isLoadMore) {
+                                this.hasMore = false;
+                                this.log('📊 没有更多数据了', 'warning');
+                            } else {
+                                this.books = [];
+                                this.log('📊 没有找到匹配的数据', 'warning');
+                            }
+                            return;
+                        }
+                        
+                        if (isLoadMore) {
+                            // 追加新数据到现有列表
+                            this.books = [...this.books, ...data.data];
+                            this.log(`📊 成功加载第${this.currentPage}页数据，获取到${data.data.length}条记录`, 'success');
+                        } else {
+                            // 重置列表并显示新数据
+                            this.books = data.data;
+                            this.hasMore = true;
+                            this.log(`📊 重置数据，当前第${this.currentPage}页，总记录数${this.totalBooks}条`, 'success');
+                        }
+                    } catch (error) {
+                        console.error('查询失败:', error);
+                        this.log(`❌ 查询失败: ${error.message}`, 'error');
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                loadMore() {
+                    if (!this.loading && this.hasMore) {
+                        this.currentPage += 1;
+                        this.log(`📄 正在加载第${this.currentPage}页数据...`, 'info');
+                        this.fetchBooks(true);
+                    }
+                },
+                handlePageChange(page) {
+                    this.currentPage = page;
+                    this.fetchBooks();
+                    this.log(`📄 切换到第${page}页`);
+                },
+                showImagePreview(imageUrl) {
+                    this.previewImage = imageUrl;
+                    this.showImageDialog = true;
+                }
+            }
+        })
+        .use(ElementPlus).mount('#app');
+    </script>
+</body>
+</html>

@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF处理工具</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/element-plus"></script>
+    <script src="https://unpkg.com/@element-plus/icons-vue/dist/index.iife.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+            margin: 20px;
+            height: calc(100vh - 40px);
+        }
+        .left-panel {
+            width: 300px;
+            padding: 20px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        .right-panel {
+            flex: 1;
+            padding: 20px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+            overflow-y: auto;
+        }
+        .upload-area {
+            border: 2px dashed #dcdfe6;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.3s;
+            margin-bottom: 20px;
+            width: 100%;
+        }
+        .upload-area:hover {
+            border-color: #409eff;
+        }
+        .preview-area {
+            margin-top: 20px;
+        }
+        .progress-info {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .download-btn {
+            width: 100%;
+        }
+        .download-btn .el-button {
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div id="app" class="container">
+        <div class="left-panel">
+            <h2 style="text-align: center; margin-bottom: 30px;">PDF转图片工具</h2>
+            
+            <div class="upload-area" 
+             @click="triggerFileInput"
+             @dragover="(e) => e.preventDefault()"
+             @drop="(e) => { e.preventDefault(); handleDrop(e) }">
+            <input type="file" 
+                   ref="fileInput" 
+                   style="display: none;"
+                   accept=".pdf,image/jpeg,image/png,image/gif,image/webp"
+                   multiple
+                   @change="handleFileChange">
+            <el-icon style="font-size: 48px; color: #909399; margin-bottom: 10px;">
+                <Upload />
+            </el-icon>
+            <div>点击或拖拽文件到此处</div>
+            <div style="color: #909399; font-size: 12px; margin-top: 5px;">
+                支持PDF文件或多张图片，最大100MB
+            </div>
+        </div>
+
+            <div v-if="downloadReady" class="download-btn">
+                <el-button type="primary" @click="downloadZip" size="large">
+                    下载图片压缩包
+                </el-button>
+            </div>
+
+            <div v-if="processing" class="progress-info">
+                <el-progress 
+                    :percentage="progress"
+                    :format="progressFormat"
+                    status="success">
+                </el-progress>
+                <div style="margin-top: 10px; color: #606266;">
+                    {{ statusText }}
+                </div>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <div v-if="previewImages.length > 0" class="preview-area">
+            <h3 style="display: flex; justify-content: space-between; align-items: center;">
+                <span>预览 (共 {{ previewImages.length }} 页)</span>
+                <el-radio-group v-model="batchOperation" @change="handleBatchOperation" style="margin-bottom: 0;">
+                    <el-radio-button v-for="option in batchOptions"
+                                    :key="option.value"
+                                    :label="option.value">
+                        {{ option.label }}
+                    </el-radio-button>
+                </el-radio-group>
+            </h3>
+            <div style="margin-bottom: 20px;">
+                <!-- 删除重复的批量操作按钮组 -->
+            </div>
+            <el-row :gutter="20" style="margin-top: 20px;">
+                <el-col v-for="(img, index) in previewImages" 
+                        :key="index" 
+                        :xs="24"
+                        :sm="12"
+                        :md="8"
+                        :lg="6"
+                        :xl="4"
+                        style="margin-bottom: 20px;">
+                    <el-card :body-style="{ padding: '0px' }" v-if="img">
+                        <div style="height: 200px; overflow: hidden; background-color: #f5f5f5;">
+                            <img :src="img" 
+                                 style="width: 100%; height: 100%; object-fit: contain;"
+                                 :alt="'第' + (index + 1) + '页'">
+                        </div>
+                        <div style="padding: 14px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <span>第 {{ index + 1 }} 页</span>
+                            </div>
+                            <el-select v-model="pageSettings[index]" 
+                                     placeholder="选择切割方式"
+                                     style="width: 100%;"
+                                     @change="handleCutChange(index)">
+                                <el-option v-for="option in cutOptions"
+                                         :key="option.value"
+                                         :label="option.label"
+                                         :value="option.value">
+                                </el-option>
+                            </el-select>
+                        </div>
+                    </el-card>
+                </el-col>
+            </el-row>
+        </div>
+
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        const { createApp, ref, computed } = Vue;
+
+        const app = createApp({
+            setup() {
+                const { ElMessage } = ElementPlus;
+                const fileInput = ref(null);
+                const processing = ref(false);
+                const progress = ref(0);
+                const statusText = ref('');
+                const previewImages = ref([]);
+                const downloadReady = ref(false);
+                const imageZip = ref(null);
+                const pageSettings = ref([]);
+                const originalFileName = ref('');
+                const batchOperation = ref('none');
+        
+                const cutOptions = [
+                    { label: '不处理', value: 'none' },
+                    { label: '水平切割', value: 'horizontal' },
+                    { label: '垂直切割', value: 'vertical' }
+                ];
+        
+                const batchOptions = [
+                    { label: '不处理', value: 'none' },
+                    { label: '批量水平切割', value: 'horizontal' },
+                    { label: '批量垂直切割', value: 'vertical' }
+                ];
+        
+                // 使用computed属性监听previewImages的变化
+                const hasPreviewImages = computed(() => previewImages.value.length > 0);
+
+                const triggerFileInput = () => {
+                    fileInput.value.click();
+                };
+
+                const handleFileChange = async (event) => {
+                    const files = Array.from(event.target.files);
+                    if (files.length === 0) return;
+
+                    // 检查文件大小
+                    for (const file of files) {
+                        if (file.size > 100 * 1024 * 1024) {
+                            ElMessage.error('单个文件大小不能超过100MB');
+                            return;
+                        }
+                    }
+
+                    // 分类处理文件
+                    const pdfFiles = files.filter(file => file.type === 'application/pdf');
+                    const imageFiles = files.filter(file => file.type.startsWith('image/'));
+
+                    if (pdfFiles.length > 1) {
+                        ElMessage.error('一次只能上传一个PDF文件');
+                        return;
+                    }
+
+                    try {
+                        processing.value = true;
+                        progress.value = 0;
+                        previewImages.value = [];
+                        pageSettings.value = [];
+
+                        if (pdfFiles.length === 1) {
+                            // 处理PDF文件
+                            originalFileName.value = pdfFiles[0].name.replace(/\.pdf$/i, '');
+                            await processFile(pdfFiles[0]);
+                        }
+
+                        if (imageFiles.length > 0) {
+                            // 处理图片文件
+                            statusText.value = '正在处理图片文件...';
+                            const totalImages = imageFiles.length;
+
+                            for (let i = 0; i < totalImages; i++) {
+                                const file = imageFiles[i];
+                                const reader = new FileReader();
+                                await new Promise((resolve, reject) => {
+                                    reader.onload = () => {
+                                        previewImages.value.push(reader.result);
+                                        pageSettings.value.push('none');
+                                        progress.value = Math.round(((i + 1) / totalImages) * 100);
+                                        resolve();
+                                    };
+                                    reader.onerror = reject;
+                                    reader.readAsDataURL(file);
+                                });
+                            }
+
+                            originalFileName.value = imageFiles.length === 1 ? 
+                                imageFiles[0].name.replace(/\.[^.]+$/, '') : 
+                                '图片集';
+                        }
+
+                        downloadReady.value = true;
+                        statusText.value = '处理完成';
+                    } catch (error) {
+                        console.error('处理文件时出错:', error);
+                        ElMessage.error('处理文件时出错');
+                    } finally {
+                        processing.value = false;
+                    }
+                };
+
+                const handleDrop = async (event) => {
+                    const file = event.dataTransfer.files[0];
+                    if (file && file.type === 'application/pdf') {
+                        if (file.size > 100 * 1024 * 1024) {
+                            ElMessage.error('文件大小不能超过100MB');
+                            return;
+                        }
+                        originalFileName.value = file.name.replace(/\.pdf$/i, '');
+                        await processFile(file);
+                    } else {
+                        ElMessage.error('请上传PDF文件');
+                    }
+                };
+
+                const processFile = async (file) => {
+                    try {
+                        processing.value = true;
+                        progress.value = 0;
+                        statusText.value = '正在加载PDF文件...';
+                        
+                        const fileReader = new FileReader();
+                        const pdfData = await new Promise((resolve, reject) => {
+                            fileReader.onload = () => resolve(new Uint8Array(fileReader.result));
+                            fileReader.onerror = reject;
+                            fileReader.readAsArrayBuffer(file);
+                        });
+
+                        const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+                        const totalPages = pdf.numPages;
+                        previewImages.value = new Array(totalPages).fill(null);
+                        pageSettings.value = new Array(totalPages).fill('none');
+
+                        for (let i = 0; i < totalPages; i++) {
+                            statusText.value = `正在处理第 ${i + 1}/${totalPages} 页`;
+                            const page = await pdf.getPage(i + 1);
+                            const viewport = page.getViewport({ scale: 2 });
+                            
+                            const canvas = document.createElement('canvas');
+                            const context = canvas.getContext('2d');
+                            canvas.width = viewport.width;
+                            canvas.height = viewport.height;
+
+                            await page.render({
+                                canvasContext: context,
+                                viewport: viewport
+                            }).promise;
+
+                            previewImages.value[i] = canvas.toDataURL('image/jpeg');
+                            progress.value = Math.round(((i + 1) / totalPages) * 100);
+                        }
+
+                        downloadReady.value = true;
+                        statusText.value = '处理完成';
+                    } catch (error) {
+                        console.error('处理PDF文件时出错:', error);
+                        ElMessage.error('处理PDF文件时出错');
+                    } finally {
+                        processing.value = false;
+                    }
+                };
+
+                const handleBatchOperation = (value) => {
+                    // 根据批量操作值更新所有页面的切割方式
+                    for (let i = 0; i < pageSettings.value.length; i++) {
+                        pageSettings.value[i] = value;
+                    }
+                };
+
+                const handleCutChange = (index) => {
+                    // 单页切割方式变更时，如果与当前批量操作不一致，则将批量操作重置为不处理
+                    if (pageSettings.value[index] !== batchOperation.value) {
+                        batchOperation.value = 'none';
+                    }
+                };
+
+                const downloadZip = async () => {
+                    try {
+                        processing.value = true;
+                        statusText.value = '正在准备下载...';
+                        progress.value = 0;
+
+                        const zip = new JSZip();
+                        const totalImages = previewImages.value.length;
+
+                        for (let i = 0; i < totalImages; i++) {
+                            const imgData = previewImages.value[i];
+                            const setting = pageSettings.value[i];
+                            
+                            if (!imgData) continue;
+
+                            // 创建临时canvas用于图片处理
+                            const tempImg = new Image();
+                            await new Promise((resolve, reject) => {
+                                tempImg.onload = resolve;
+                                tempImg.onerror = reject;
+                                tempImg.src = imgData;
+                            });
+
+                            const canvas = document.createElement('canvas');
+                            const ctx = canvas.getContext('2d');
+
+                            if (setting === 'horizontal') {
+                                // 水平切割
+                                canvas.width = tempImg.width - 40; // 左右各减20px
+                                canvas.height = (tempImg.height / 2) - 40; // 上下各减20px
+
+                                // 上半部分
+                                ctx.drawImage(tempImg, 
+                                    20, 20, // 源图像起始x,y (左右上下各裁剪20px)
+                                    tempImg.width - 40, tempImg.height / 2 - 40, // 源图像宽度和高度各减40px
+                                    0, 0, // 目标起始位置
+                                    canvas.width, canvas.height // 目标尺寸
+                                );
+                                const topHalf = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+                                zip.file(`page_${i + 1}_top.jpg`, topHalf, {base64: true});
+
+                                // 下半部分
+                                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                ctx.drawImage(tempImg,
+                                    20, tempImg.height / 2 + 20, // 源图像起始x,y (左右上下各裁剪20px)
+                                    tempImg.width - 40, tempImg.height / 2 - 40, // 源图像宽度和高度各减40px
+                                    0, 0, // 目标起始位置
+                                    canvas.width, canvas.height // 目标尺寸
+                                );
+                                const bottomHalf = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+                                zip.file(`page_${i + 1}_bottom.jpg`, bottomHalf, {base64: true});
+                            } else if (setting === 'vertical') {
+                                // 垂直切割
+                                canvas.width = (tempImg.width / 2) - 40; // 左右各减20px
+                                canvas.height = tempImg.height - 40; // 上下各减20px
+
+                                // 左半部分
+                                ctx.drawImage(tempImg,
+                                    20, 20, // 源图像起始x,y (左边裁剪20px，顶部裁剪20px)
+                                    tempImg.width / 2 - 40, tempImg.height - 40, // 源图像宽度和高度各减20px
+                                    0, 0, // 目标起始位置
+                                    canvas.width, canvas.height // 目标尺寸
+                                );
+                                const leftHalf = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+                                zip.file(`page_${i + 1}_left.jpg`, leftHalf, {base64: true});
+
+                                // 右半部分
+                                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                ctx.drawImage(tempImg,
+                                    tempImg.width / 2 + 20, 20, // 源图像起始x,y (右半部分起始位置加20px，顶部裁剪20px)
+                                    tempImg.width / 2 - 40, tempImg.height - 40, // 源图像宽度和高度各减20px
+                                    0, 0, // 目标起始位置
+                                    canvas.width, canvas.height // 目标尺寸
+                                );
+                                const rightHalf = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+                                zip.file(`page_${i + 1}_right.jpg`, rightHalf, {base64: true});
+                            } else {
+                                // 不处理，直接添加原图
+                                const imgBase64 = imgData.split(',')[1];
+                                zip.file(`page_${i + 1}.jpg`, imgBase64, {base64: true});
+                            }
+
+                            progress.value = Math.round(((i + 1) / totalImages) * 100);
+                            statusText.value = `正在处理第 ${i + 1}/${totalImages} 页`;
+                        }
+
+                        statusText.value = '正在生成压缩包...';
+                        const content = await zip.generateAsync({type: 'blob'}, metadata => {
+                            progress.value = Math.round(metadata.percent);
+                        });
+
+                        // 创建下载链接并触发下载
+                        const url = URL.createObjectURL(content);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `${originalFileName.value || 'pdf'}.zip`;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(url);
+
+                        statusText.value = '下载已开始';
+                        ElMessage.success('压缩包已开始下载');
+                    } catch (error) {
+                        console.error('生成压缩包时出错:', error);
+                        ElMessage.error('生成压缩包时出错');
+                    } finally {
+                        processing.value = false;
+                        progress.value = 100;
+                    }
+                };
+
+                const progressFormat = (percentage) => {
+                    return percentage + '%';
+                };
+        
+                return {
+                    fileInput,
+                    processing,
+                    progress,
+                    statusText,
+                    previewImages,
+                    downloadReady,
+                    imageZip,
+                    pageSettings,
+                    batchOperation,
+                    cutOptions,
+                    batchOptions,
+                    hasPreviewImages,
+                    triggerFileInput,
+                    handleFileChange,
+                    handleDrop,
+                    handleBatchOperation,
+                    handleCutChange,
+                    downloadZip,
+                    progressFormat
+                };
+            }
+        });
+        
+        app.use(ElementPlus);
+        app.mount('#app');
+    </script>
+</body>
+</html>
